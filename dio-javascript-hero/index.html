@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Classificação de herói</title>
+        <link rel="stylesheet" href="styles.css" />
+        <script src="script.js"></script>
+    </head>
+    <body>
+        <h1 class="title">Classificação de herói</h1>
+        <form class="hero">
+            <label id="name_label" for="name">Nome do herói:</label>
+            <input id="name" type="text" width="40"><br />
+            <label id="xp_label" for="xp">eXperience Points:</label>
+            <input id="xp" type="number" min="0" value="0" step="10">
+        </form>
+        <br />
+        <div id="message"></div>
+        <br />
+        <button onclick="checkPoints();">Avaliar</button>
+    </body>
+</html>
