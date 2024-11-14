@@ -1,0 +1,24 @@
+classDiagram
+    class IPhone
+    class AparelhoTelefonico
+    class NavegadorInternet
+    class ReprodutorMusical
+    IPhone <|-- AparelhoTelefonico
+    IPhone <|-- NavegadorInternet
+    IPhone <|-- ReprodutorMusical
+    IPhone: -boolean telefoneTocando
+    IPhone: -boolean musicaTocando
+    IPhone: -String numeroTelefone
+    IPhone: -String musicaAtual
+    IPhone: +ligarAparelho() void
+    IPhone: +modoAviao(boolean) void
+    IPhone: +desligarAparelho() void
+    AparelhoTelefonico: +atender() void
+    AparelhoTelefonico: +iniciarCorreioVoz() void
+    AparelhoTelefonico: +ligar(String) boolean
+    NavegadorInternet: +adicionarNovaAba() void
+    NavegadorInternet: +atualizarPagina() void
+    NavegadorInternet: +exibirPagina(String) void
+    ReprodutorMusical: +pausar() void
+    ReprodutorMusical: +selecionarMusica(String) void
+    ReprodutorMusical: +tocar() void
