@@ -16,11 +16,13 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Java Bootcamp:** estrutura de dados para gerenciamento de bootcamp em Java, disponível na pasta [dio-java-bootcamp](dio-java-bootcamp/).
 
-* **Java Classificação de Herói:** classe para demonstrar programação básica em Javascript, disponível na pasta [dio-javascript-hero](dio-javascript-hero/).
-
 * **Jogo Detona Ralph em Javascript:** jogo Detona Ralph em Javascript, disponível na pasta [dio-javascript-detona-ralph](dio-javascript-detona-ralph/).
 
-* **Javascript landpage:** land page escrita em HTML/Javascript, disponível na pasta [dio-javascript-landpage](dio-javascript-landpage).
+* **Javascript Classificação de Herói:** classe para demonstrar programação básica em Javascript, disponível na pasta [dio-javascript-hero](dio-javascript-hero/).
+
+* **Javascript Pokedex:** demonstração de CSS e Javascript, disponível na pasta [dio-javascript-pokedex](dio-javascript-pokedex/).
+
+* **Javascript landpage:** land page escrita em HTML/Javascript, disponível na pasta [dio-javascript-landpage](dio-javascript-landpage/).
 
 * **Nexa AWS Personal Trainer:** personal trainer escrito em AWS Bedrock para o projeto Nexa, disponível na pasta [dio-nexa-aws-personal-trainer](dio-nexa-aws-personal-trainer/).
 
