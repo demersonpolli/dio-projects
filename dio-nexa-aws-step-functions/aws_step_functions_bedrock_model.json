@@ -1,0 +1,81 @@
+{
+  "Comment": "An example of using Bedrock to chain prompts and their responses together.",
+  "StartAt": "Invoke model with first prompt",
+  "States": {
+    "Invoke model with first prompt": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-8b-instruct-v1:0",
+        "ContentType": "application/json",
+        "Accept": "*/*",
+        "Body": {
+          "prompt": "Você é um especialista em planejar pratos para uma festa ou evento. Se não for especificado considere que a festa ou evento contará com 5 pessoas. Apenas uma das pessoas possui restrições alimentares e requer baixo consumo de açucares. Todas as respostas devem ser em português.",
+          "temperature": 0,
+          "top_p": 1,
+          "max_gen_len": 1024
+        }
+      },
+      "Next": "Add first result to conversation history",
+      "ResultPath": "$.result_one",
+      "ResultSelector": {
+        "result_one.$": "$.Body.generation"
+      }
+    },
+    "Add first result to conversation history": {
+      "Type": "Pass",
+      "Next": "Invoke model with second prompt",
+      "Parameters": {
+        "convo_one.$": "States.Format('{}\n{}', $.prompt_one, $.result_one.result_one)"
+      },
+      "ResultPath": "$.convo_one"
+    },
+    "Invoke model with second prompt": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-8b-instruct-v1:0",
+        "Body": {
+          "prompt": "string",
+          "temperature": 0,
+          "top_p": 1,
+          "max_gen_len": 1024
+        },
+        "ContentType": "application/json",
+        "Accept": "*/*"
+      },
+      "Next": "Add second result to conversation history",
+      "ResultSelector": {
+        "result_two.$": "$.Body.generation"
+      },
+      "ResultPath": "$.result_two"
+    },
+    "Add second result to conversation history": {
+      "Type": "Pass",
+      "Next": "Invoke model with third prompt",
+      "Parameters": {
+        "convo_two.$": "States.Format('{}\n{}\n{}', $.convo_one.convo_one, $.prompt_two, $.result_two.result_two)"
+      },
+      "ResultPath": "$.convo_two"
+    },
+    "Invoke model with third prompt": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "arn:aws:bedrock:us-east-1::foundation-model/meta.llama3-8b-instruct-v1:0",
+        "Body": {
+          "prompt": "string",
+          "temperature": 0,
+          "top_p": 1,
+          "max_gen_len": 1024
+        },
+        "ContentType": "application/json",
+        "Accept": "*/*"
+      },
+      "End": true,
+      "ResultSelector": {
+        "result_three.$": "$.Body.generation"
+      }
+    }
+  }
+}

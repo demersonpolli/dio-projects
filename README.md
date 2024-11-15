@@ -24,4 +24,6 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Nexa AWS Personal Trainer:** personal trainer escrito em AWS Bedrock para o projeto Nexa, disponível na pasta [dio-nexa-aws-personal-trainer](dio-nexa-aws-personal-trainer/).
 
+* **Nexa AWS Step Functions:** modelo desenvolvido no AWS Step Functions, disponível na pasta [dio-nexa-aws-step-functions](dio-nexa-aws-step-functions).
+
 * **DIO iPhone UML:** exercício de UML (*Unified Modelling Language*), disponível na pasta [dio-uml-iphone](dio-uml-iphone/).
