@@ -22,6 +22,8 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Javascript Pokedex:** demonstração de CSS e Javascript, disponível na pasta [dio-javascript-pokedex](dio-javascript-pokedex/).
 
+* **Javascript Yo-Gi-Oh:** jogo de Yo-Gi-Oh desenvolvido em Javascript, disponível na pasta [dio-javascript-yo-gi-oh](dio-javascript-yo-gi-oh/).
+
 * **Javascript landpage:** land page escrita em HTML/Javascript, disponível na pasta [dio-javascript-landpage](dio-javascript-landpage/).
 
 * **Nexa AWS Personal Trainer:** personal trainer escrito em AWS Bedrock para o projeto Nexa, disponível na pasta [dio-nexa-aws-personal-trainer](dio-nexa-aws-personal-trainer/).
