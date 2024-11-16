@@ -16,6 +16,8 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Java Bootcamp:** estrutura de dados para gerenciamento de bootcamp em Java, disponível na pasta [dio-java-bootcamp](dio-java-bootcamp/).
 
+* **Java Design Patterns:** demonstração de *design patterns* disponível na pasta [dio-java-spring-patterns](dio-java-spring-patterns/).
+
 * **Jogo Detona Ralph em Javascript:** jogo Detona Ralph em Javascript, disponível na pasta [dio-javascript-detona-ralph](dio-javascript-detona-ralph/).
 
 * **Javascript Classificação de Herói:** classe para demonstrar programação básica em Javascript, disponível na pasta [dio-javascript-hero](dio-javascript-hero/).
