@@ -20,11 +20,13 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Javascript Classificação de Herói:** classe para demonstrar programação básica em Javascript, disponível na pasta [dio-javascript-hero](dio-javascript-hero/).
 
+* **Javascript landpage:** land page escrita em HTML/Javascript, disponível na pasta [dio-javascript-landpage](dio-javascript-landpage/).
+
+* **Javascript Piano:** simulador de piano em Javascript, disponível na pasta [dio-javascript-piano](dio-javascript-piano/).
+
 * **Javascript Pokedex:** demonstração de CSS e Javascript, disponível na pasta [dio-javascript-pokedex](dio-javascript-pokedex/).
 
 * **Javascript Yo-Gi-Oh:** jogo de Yo-Gi-Oh desenvolvido em Javascript, disponível na pasta [dio-javascript-yo-gi-oh](dio-javascript-yo-gi-oh/).
-
-* **Javascript landpage:** land page escrita em HTML/Javascript, disponível na pasta [dio-javascript-landpage](dio-javascript-landpage/).
 
 * **Nexa AWS Personal Trainer:** personal trainer escrito em AWS Bedrock para o projeto Nexa, disponível na pasta [dio-nexa-aws-personal-trainer](dio-nexa-aws-personal-trainer/).
 
