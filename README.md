@@ -24,7 +24,7 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Javascript Classificação de Herói:** classe para demonstrar programação básica em Javascript, disponível na pasta [dio-javascript-hero](dio-javascript-hero/).
 
-* **Javascript landpage:** land page escrita em HTML/Javascript, disponível na pasta [dio-javascript-landpage](dio-javascript-landpage/).
+* **Javascript landing-page:** land page escrita em HTML/Javascript, disponível na pasta [dio-javascript-landingpage](dio-javascript-landingpage/).
 
 * **Javascript Piano:** simulador de piano em Javascript, disponível na pasta [dio-javascript-piano](dio-javascript-piano/).
 
