@@ -6,6 +6,8 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Azure Docker Microserviços:** demonstração de microserviços usando Docker, disponível na pasta [dio-azure-docker-microservices](dio-azure-docker-microservices/).
 
+* **Azure Kubernetes Pipeline:** demonstração de pipeline Kubernet, disponível na pasta [dio-azure-kubernetes]().
+
 * **Validação de cartão de crédito usando Azure Document Intelligence:** exercício de Azure disponível na pasta [dio-azure-credit-card-evaluator](dio-azure-credit-card-evaluator/).
 
 * **Tradutor de textos usando Azure Translator e Azure OpenAI:** exercício de Azure e OpenAI disponível na pasta [dio-azure-translator](dio-azure-translator/).
