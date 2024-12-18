@@ -6,6 +6,8 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Azure Docker Microserviços:** demonstração de microserviços usando Docker, disponível na pasta [dio-azure-docker-microservices](dio-azure-docker-microservices/).
 
+* **Azure Functions CPF Validator:** validação de CPF usando Azure Functions, disponível na pasta [dio-azure-function-cpf](dio-azure-function-cpf/).
+
 * **Azure Kubernetes Pipeline:** demonstração de pipeline Kubernet, disponível na pasta [dio-azure-kubernetes]().
 
 * **Validação de cartão de crédito usando Azure Document Intelligence:** exercício de Azure disponível na pasta [dio-azure-credit-card-evaluator](dio-azure-credit-card-evaluator/).
