@@ -40,6 +40,8 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Javascript Yo-Gi-Oh:** jogo de Yo-Gi-Oh desenvolvido em Javascript, disponível na pasta [dio-javascript-yo-gi-oh](dio-javascript-yo-gi-oh/).
 
+* **Netflix using Azure Functions:** servidor de vídeos usando Azure Functions e Cosmos DB, disponível na pasta[dio-azure-netflix](dio-azure-netflix/).
+
 * **Nexa AWS Personal Trainer:** personal trainer escrito em AWS Bedrock para o projeto Nexa, disponível na pasta [dio-nexa-aws-personal-trainer](dio-nexa-aws-personal-trainer/).
 
 * **Nexa AWS Step Functions:** modelo desenvolvido no AWS Step Functions, disponível na pasta [dio-nexa-aws-step-functions](dio-nexa-aws-step-functions).
