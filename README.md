@@ -8,7 +8,9 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Azure Functions CPF Validator:** validação de CPF usando Azure Functions, disponível na pasta [dio-azure-function-cpf](dio-azure-function-cpf/).
 
-* **Azure Kubernetes Pipeline:** demonstração de pipeline Kubernet, disponível na pasta [dio-azure-kubernetes]().
+* **Azure Kubernetes Pipeline:** demonstração de pipeline Kubernet, disponível na pasta [dio-kubernetes-pipeline](dio-kubernetes-pipeline/).
+
+* **Azure WebApps API:** demonstração de Azure Web Apps, disponível na pasta [dio-azure-web-app](dio-azure-web-app/)
 
 * **Validação de cartão de crédito usando Azure Document Intelligence:** exercício de Azure disponível na pasta [dio-azure-credit-card-evaluator](dio-azure-credit-card-evaluator/).
 
