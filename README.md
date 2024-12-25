@@ -1,4 +1,4 @@
-# Projetos para DIO
+# Projetos dos cursos da DIO (2024)
 
 Este repositório contém todos os projetos elaborados para os *bootcamps* da [DIO](https://dio.me).
 
