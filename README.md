@@ -63,6 +63,8 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Blog usando Container Apps:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-blog-container](2025-azure-blog-container/).
 
+* **Chat com Azure Foundry:** projeto do curso Microsoft Azure, disponível na pasta [2025-azure-foundry](2025-azure-foundry/).
+
 * **Configuração do *Azure Data Factory*:** descrição do processo para criar um *Azure Data Factory*, disponível na pasta [2025-azure-datafactory](2025-azure-datafactory/).
 
 * **Cópia de arquivo com *Azure Data Factory*:** exemplo de como transferir dados entre fontes usando o *Azure Data Factory*, disponível em [2025-azure-datalake](2025-azure-datalake/).
