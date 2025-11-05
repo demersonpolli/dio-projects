@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dio-azure-blog-container
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: curso-ia
+  template:
+    metadata:
+      labels:
+        app: curso-ia
+    spec:
+      containers:
+      - name: curso-ia
+        image: acrpollidioazure.azurecr.io/curso-ia:latest
+        ports:
+          - containerPort: 80

@@ -1,0 +1,106 @@
+.page {
+    --gray-rgb: 0, 0, 0;
+    --gray-alpha-200: rgba(var(--gray-rgb), 0.08);
+    --gray-alpha-100: rgba(var(--gray-rgb), 0.05);
+
+    --button-primary-hover: #383838;
+    --button-secondary-hover: #2f2f2f;
+
+    display: flex;
+    flex-direction: row;
+    
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: 0;
+
+    background-color: #282c34;
+    color: white;    
+}
+
+.sidebar {
+    background-color: #202123;
+    padding: 10px;
+    width: 250px;
+}
+
+.main {
+    align-items: center;    
+    display: flex;
+    font-family: var(--font-geist-mono);
+    flex-direction: column;    
+    gap: 32px;
+    grid-row-start: 2;
+    width: 100%;
+}
+
+.logo {
+    width: 100px;
+    height: 100px;
+    filter: none;
+}
+
+@media (prefers-color-scheme: dark) {
+    .page {
+        --gray-rgb: 255, 255, 255;
+        --gray-alpha-200: rgba(var(--gray-rgb), 0.145);
+        --gray-alpha-100: rgba(var(--gray-rgb), 0.06);
+
+        --button-primary-hover: #ccc;
+        --button-secondary-hover: #1a1a1a;
+    }
+}
+
+@media (max-width: 600px) {
+    .page {
+        padding: 32px;
+        padding-bottom: 80px;
+    }
+
+    .main {
+        align-items: center;
+    }
+}
+
+@media (prefers-color-scheme: dark) {
+    .logo {
+        filter: invert();
+    }
+}
+
+/* chat css */
+.chatbox {
+    flex: 1;
+    background-color: #353541;
+    overflow-y: auto;
+    position: relative;
+}
+
+.chatlog {
+    text-align: left;
+    white-space: "pre-wrap";
+}
+
+.chatinput {
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 24px;
+    position: absolute;
+    width: 100%;
+}
+
+.chattext {
+    background-color: #40414f;
+    border: none;
+    border-radius: 5px;
+    box-shadow: 0 0 8px 0 rgba(0, 0, 0, .25);
+    color: white;
+    font-size: 1.1em;
+    margin: 12px;
+    outline: none;
+    padding: 12px;
+    resize: none;
+    width: 95%;
+}

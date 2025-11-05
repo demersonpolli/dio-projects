@@ -1,0 +1,19 @@
+.chat-message.ai {
+    background-color: #444654;
+}
+
+.chat-message-center {
+    display: flex;
+
+    margin-left: auto;
+    margin-right: auto;    
+    max-width: 640px;
+    padding: 12px;
+    padding-left: 24px;
+    padding-right: 24px;
+}
+
+.message {
+    padding-left: 50px;
+    padding-right: 50px;
+}

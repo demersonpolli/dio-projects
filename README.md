@@ -53,6 +53,35 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 ## Projetos (2025) ##
 
+* **Aluguel de carros com Azure:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [dio-azure-car-rental](dio-azure-car-rental/). [TODO]
+
+* **API de Pagamentos com Azure API Management:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-api-management](2025-azure-api-management/). [TODO]
+
+* **Artigo com uso de chatGPT:** artigo técnico escrito com o uso do chatGPT, disponível na pasta [2025-artigo-chatgpt](2025-artigo-chatgpt/).
+
+* **Autenticador de boletos:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-autenticador](2025-azure-autenticador/). [TODO]
+
+* **Blog usando Container Apps:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-blog-container](2025-azure-blog-container/).
+
+* **Configuração do *Azure Data Factory*:** descrição do processo para criar um *Azure Data Factory*, disponível na pasta [2025-azure-datafactory](2025-azure-datafactory/).
+
+* **Cópia de arquivo com *Azure Data Factory*:** exemplo de como transferir dados entre fontes usando o *Azure Data Factory*, disponível em [2025-azure-datalake](2025-azure-datalake/).
+
+* **Configurando *Azure DevOps* para uso com *Azure Data Factory*:** exemplo de como configurar uma esteira de *DevOps* com o *Azure Data Factory*, disponível em [2025-azure-devops](2025-azure-devops/).
+
+* **E-book com uso de chatGPT:** e-book escrito com uso do chatGPT, disponível na pasta [2025-ebook-chatgpt](2025-ebook-chatgpt/).
+
+* **E-commerce usando Azure SQL e Blob Storage:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-ecommerce](2025-azure-ecommerce/).
+
+* **Executando notebooks no Databricks:** exemplo de utilização de notebooks no *Azure Databricks*, disponível na pasta [2025-azure-databricks](2025-azure-databricks/).
+
+* **Front-end para chatGPT em Node.js:** front-end desenvolvido em Node.js para o chat-GPT, disponível na pasta [2025-openai-nodejs](2025-openai-nodejs/).
+
 * **Jogo de Sudoku:** jogo de Sudoku desenvolvido em Java, disponível na pasta [2025-santander-sudoku](2025-santander-sudoku/).
 
+* **Previsão de vendas usando Azure AutoML:** modelo de regressão usando Azure AutoML, disponível na pasta [2025-azure-ml-icecream](2025-azure-ml-icecream/).
+
 * **Task board em Java:** board de tarefas em Java, disponível na pasta [2025-santander-taskboard](2025-santander-taskboard/).
+
+* **Tutorial de Copilot:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-copilot-tutorial](2025-azure-copilot-tutorial/).
+

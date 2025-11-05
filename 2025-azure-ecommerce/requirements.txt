@@ -1,0 +1,6 @@
+streamlit
+azure-storage-blob
+python-dotenv
+sqlalchemy
+pyodbc
+pandas
