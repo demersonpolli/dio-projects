@@ -61,6 +61,8 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 * **Autenticador de boletos:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-autenticador](2025-azure-autenticador/). [TODO]
 
+* **Binance Bitcoin wallet:** projeto do curso Blockchain da Binance, disponível na pasta[2025-binance-bitcoin-wallet](2025-binance-bitcoin-wallet/).
+
 * **Blog usando Container Apps:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-blog-container](2025-azure-blog-container/).
 
 * **Chat com Azure Foundry:** projeto do curso Microsoft Azure, disponível na pasta [2025-azure-foundry](2025-azure-foundry/).
