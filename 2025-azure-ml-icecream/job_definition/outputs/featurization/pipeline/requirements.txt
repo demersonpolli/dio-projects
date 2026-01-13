@@ -1,4 +1,4 @@
-mlflow==3.5.0rc0
+mlflow==3.5.0
 azureml-train-automl-runtime==1.59.0
 inference-schema
 xgboost<=1.5.2
