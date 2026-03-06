@@ -58,6 +58,4 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 * **Cripto-moeda em Solidity:** projeto do curso Binance - Blockchain Developer with Solidity 2025, disponível na pasta [2026-binance-blockchain-coin](2026-binance-blockchain-coin/).
 * **NFT na rede Etherium:** projeto do curso Binance - Blockchain Developer with Solidity 2025, disponível no URL [OpenSea](https://opensea.io/collection/the-wonderful-solar-system-258185570).
 * **Como criar uma DAO (descentralized autonomous organization):** projeto do curso Binance - Blockchain Developer with Solidity 2025, disponível na pasta [2026-binance-blockchain-dao](2026-binance-blockchain-dao/).
-
-
-
+* NFT de Pokémon: projeto do curso Blockchain Specialist, disponível na pasta [2026-blockchain-specialist-nft](2026-blockchain-specialist-nft/).
