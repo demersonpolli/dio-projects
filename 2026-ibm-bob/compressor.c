@@ -289,20 +289,14 @@ HuffEntry *build_freq_table(LZ77Token *tokens, uint32_t *count) {
  *                       priority queue of leaf HuffNodes.
  *
  *   freq_table : sorted HuffEntry array (ascending by freq) with *count entries
- *   count      : on entry, number of entries in freq_table;
- *                on exit,  number of successfully allocated nodes (may be less
- *                          than the input count if allocation fails mid-way)
+ *   count      : number of entries in freq_table (not modified)
  *
  *   Returns a heap-allocated array of (*count) HuffNode pointers, each pointing
- *   to a newly allocated leaf node, or NULL if the queue allocation fails.
- *
- * TODO (partial-failure leak) — When malloc fails for a node or its symbols
- *   array mid-loop, the function sets *count = idx and returns the partial queue.
- *   The already-allocated nodes (indices 0..idx-1) are NOT freed before
- *   returning.  The caller has no way to distinguish a partial result from a
- *   full one.  Fix: either free all allocated nodes before returning NULL, or
- *   document clearly that the caller must free the partial array using the
- *   updated *count value.
+ *   to a newly allocated leaf node, or NULL on any allocation failure.
+ *   On failure all partially-allocated nodes and the queue array are freed
+ *   before returning NULL so the caller never receives a partial result.
+ *   The caller is responsible for free()ing the returned array and, eventually,
+ *   the tree built from it.
  */
 HuffNode **build_huffman_queue(HuffEntry *freq_table, uint32_t *count) {
     HuffNode **queue = (HuffNode **)malloc(*count * sizeof(HuffNode *));
@@ -311,14 +305,26 @@ HuffNode **build_huffman_queue(HuffEntry *freq_table, uint32_t *count) {
     for (uint32_t idx = 0; idx < *count; idx++) {
         queue[idx] = (HuffNode *)malloc(sizeof(HuffNode));
         if (!queue[idx]) {
-            *count = idx;
-            return queue;
+            /* Free every fully-built node allocated so far, then the array. */
+            for (uint32_t i = 0; i < idx; i++) {
+                free(queue[i]->symbols);
+                free(queue[i]);
+            }
+            free(queue);
+            return NULL;
         }
+
         queue[idx]->symbols = (LZ77Token *)malloc(sizeof(LZ77Token));
         if (!queue[idx]->symbols) {
+            /* The HuffNode struct for this index was allocated but symbols was
+             * not — free the struct, then free all earlier fully-built nodes. */
             free(queue[idx]);
-            *count = idx;
-            return queue;
+            for (uint32_t i = 0; i < idx; i++) {
+                free(queue[i]->symbols);
+                free(queue[i]);
+            }
+            free(queue);
+            return NULL;
         }
 
         *(queue[idx]->symbols) = freq_table[idx].symbol;
@@ -433,23 +439,27 @@ HuffNode *build_huffman_tree(HuffNode **queue, uint32_t count) {
 void traverse_tree(HuffNode *node, HuffCode *codes, uint32_t *code_idx,
                    unsigned char *bits, unsigned char depth)
 {
-    /* TODO 1 — BASE CASE: if node == NULL, return immediately.                  */
+    // BASE CASE: if node == NULL, return immediately.
+    if (node == NULL) return;
 
-    /* TODO 2 — LEAF CHECK: if (node->left == NULL && node->right == NULL):
-     *   For i = 0 .. node->num_symbols - 1:
-     *     codes[*code_idx].symbol = node->symbols[i];
-     *     memcpy(codes[*code_idx].bits, bits, depth * sizeof(unsigned char));
-     *     codes[*code_idx].length = depth;
-     *     (*code_idx)++;
-     *   return;  (do not recurse further)                                        */
+    // LEAF CHECK: if (node->left == NULL && node->right == NULL):
+    if (node->left == NULL && node->right == NULL) {
+        for (int i = 0; i < node->num_symbols; i++) {
+            codes[*code_idx].symbol = node->symbols[i];
+            memcpy(codes[*code_idx].bits, bits, depth * sizeof(unsigned char));
+            codes[*code_idx].length = depth;
+            (*code_idx)++;
+        }
+        return;
+    }
 
-    /* TODO 3 — RECURSE LEFT (0-branch):
-     *   bits[depth] = 0;
-     *   traverse_tree(node->left,  codes, code_idx, bits, depth + 1);           */
+    // RECURSE LEFT (0-branch):
+    bits[depth] = 0;
+    traverse_tree(node->left,  codes, code_idx, bits, depth + 1);
 
-    /* TODO 4 — RECURSE RIGHT (1-branch):
-     *   bits[depth] = 1;
-     *   traverse_tree(node->right, codes, code_idx, bits, depth + 1);           */
+    // RECURSE RIGHT (1-branch):
+    bits[depth] = 1;
+    traverse_tree(node->right, codes, code_idx, bits, depth + 1);
 }
 
 /*
@@ -466,19 +476,25 @@ HuffCode *generate_codes(HuffNode *root, uint32_t count) {
     HuffCode *codes = (HuffCode *)malloc(count * sizeof(HuffCode));
     if (!codes) return NULL;
 
-    /* TODO 5 — GUARD: if (root == NULL) { free(codes); return NULL; }           */
+    // GUARD: if (root == NULL) { free(codes); return NULL; }
+    if (root == NULL) { free(codes); return NULL; }
 
-    /* TODO 6 — SCRATCH BUFFER:
-     *   unsigned char bits[32];
-     *   (32 entries is enough for a tree up to 32 levels deep)                  */
+    // SCRATCH BUFFER:
+    //   unsigned char bits[32];
+    //   (32 entries is enough for a tree up to 32 levels deep)
+    unsigned char bits[32];
 
-    /* TODO 7 — TRAVERSE:
-     *   uint32_t code_idx = 0;
-     *   traverse_tree(root, codes, &code_idx, bits, 0);
-     *   After the call, code_idx should equal 'count'.  If it does not, the
-     *   tree and the count argument are out of sync — add an assertion or log. */
+    // TRAVERSE:
+    //   uint32_t code_idx = 0;
+    //   traverse_tree(root, codes, &code_idx, bits, 0);
+    //   After the call, code_idx should equal 'count'.  If it does not, the
+    //   tree and the count argument are out of sync — add an assertion or log.
+    uint32_t code_idx = 0;
+    traverse_tree(root, codes, &code_idx, bits, 0);
+    assert(code_idx == count);
 
-    /* TODO 8 — return codes;                                                     */
+    // return codes;
+    return codes;
 }
 
 /*
@@ -588,7 +604,10 @@ void usage(const char *program_name)
  *     index:  [ 0 ........... 255 | 256 ........... 511 ]
  *                  BUFFER HALF          LOOK-AHEAD HALF
  *
- *   'base'  is a fixed boundary at index LOOK_AHEAD (256); it never changes.
+ *   'base'  is the index of the first allocated byte in the buffer half.  It
+ *   starts at LOOK_AHEAD (256) — meaning the buffer is empty — and slides left
+ *   toward 0 as bytes are shifted in.  Once it reaches 0 the full buffer half
+ *   is occupied and it stays fixed there.
  *   'ahead' starts at LOOK_AHEAD and advances right as bytes are read from file.
  *
  *   Each LZ77 token is a uint16_t packed as: (distance << 8) | payload
@@ -602,7 +621,9 @@ void compress(const char *input_path, const char *output_path)
      * ========================================================================= */
 
     unsigned char window[WINDOW_SIZE];
-    unsigned int  base  = LOOK_AHEAD;   /* fixed boundary; must NOT be modified  */
+    unsigned int  base  = LOOK_AHEAD;   /* first allocated byte in the buffer half;
+                                         * slides from LOOK_AHEAD down to 0 as the
+                                         * window fills, then stays fixed at 0     */
     unsigned int  ahead = LOOK_AHEAD;   /* advances as the look-ahead fills up    */
 
     /* --- Open input file ----------------------------------------------------- */
@@ -647,11 +668,7 @@ void compress(const char *input_path, const char *output_path)
             if (window[pos] == value) {
                 match_found = TRUE;
 
-                /* TODO (bug — count not reset) — Declare and reset a local
-                 *   'count' variable to 0 HERE, before the inner loop below,
-                 *   so that each candidate position starts a fresh length count.
-                 *   Without this reset, length from the previous candidate
-                 *   accumulates, producing inflated match lengths.               */
+                /* Fresh length count for this candidate position */
                 unsigned char count = 0;
 
                 /* Count match length at this candidate position */
@@ -670,28 +687,19 @@ void compress(const char *input_path, const char *output_path)
             }
         }
 
-        /* Emit token: literal (distance==0) or back-reference (distance>0) */
-        /* TODO (token encoding) — When distance == 0, the payload must be the
-         *   raw literal byte (window[LOOK_AHEAD]), not best_len (which is 0).
-         *   The current expression  distance << 8 | best_len  correctly stores 0
-         *   in the high byte but also stores 0 in the low byte for a literal.
-         *   Fix: emit  (uint16_t)window[LOOK_AHEAD]  as the literal token, i.e.:
-         *     if (distance == 0)
-         *         token_array[token_count++] = window[LOOK_AHEAD];
-         *     else
-         *         token_array[token_count++] = (distance << 8) | best_len;      */
-        token_array[token_count++] = (distance << 8) | best_len;
+        // Emit token: literal (distance==0) or back-reference (distance>0) */
+        token_array[token_count++] = (distance == 0) 
+            ? (uint16_t)window[LOOK_AHEAD] 
+            : (distance << 8) | best_len;
 
         /* Shift window left by the number of bytes consumed */
         unsigned char shift = (distance == 0) ? 1 : best_len;
         memmove(window, window + shift, WINDOW_SIZE - shift);
 
-        /* TODO (bug — base must NOT change) — Remove the line below.
-         *   'base' is a fixed index (LOOK_AHEAD = 256).  The window content
-         *   moves via memmove above; moving the index as well causes the search
-         *   range to shrink by 'shift' on every iteration, eventually reaching
-         *   zero and making LZ77 emit only literals.
-         *   Delete:  base = base < shift ? 0 : base - shift;                    */
+        /* Slide 'base' left to track the first allocated byte after the shift.
+         * While the buffer half is still filling up (base > 0) this expands the
+         * search range; once base reaches 0 the full buffer half is searchable
+         * and it stays clamped there.                                            */
         base = base < shift ? 0 : base - shift;
 
         ahead -= shift;
