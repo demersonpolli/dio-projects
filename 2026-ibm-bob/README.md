@@ -19,17 +19,17 @@ de arquivos em dois estágios:
 O formato de arquivo comprimido resultante é o `.zipc`, com o seguinte layout
 de cabeçalho:
 
-| Offset   | Tamanho | Campo             | Descrição                                         |
-|----------|---------|-------------------|----------------------------------------------------|
-| 0        | 4       | `MAGIC`           | `0x5A 0x49 0x50 0x43` ("ZIPC")                     |
-| 4        | 1       | `VERSION`         | `0x01`                                             |
-| 5        | 8       | `ORIG_SIZE`       | tamanho do arquivo original (uint64 LE)            |
-| 13       | N+1     | `ORIG_NAME`       | nome do arquivo original (com terminador nulo)     |
-| 14+N     | 2       | `HUFF_ENTRIES`    | número de entradas na tabela de Huffman (uint16 LE)|
-| 16+N     | 5*E     | `HUFF_TABLE`      | E entradas `{ symbol(1B), freq(uint32 LE) }`       |
-| 16+N+5E  | 2       | `DATA_BYTES`      | tamanho do bloco de dados comprimido (LE)          |
-| 18+N+5E  | 1       | `PADDING_BITS`    | bits de padding no último byte (0..7)              |
-| 19+N+5E  | *       | `COMPRESSED_DATA` | fluxo de tokens LZ77 codificado em Huffman         |
+| Offset   | Tamanho | Campo             | Descrição                                              |
+|----------|---------|-------------------|----------------------------------------------------------|
+| 0        | 4       | `MAGIC`           | `0x5A 0x49 0x50 0x43` ("ZIPC")                            |
+| 4        | 1       | `VERSION`         | `0x01`                                                    |
+| 5        | 8       | `ORIG_SIZE`       | tamanho do arquivo original (uint64 LE)                   |
+| 13       | N+1     | `ORIG_NAME`       | nome do arquivo original (com terminador nulo)            |
+| 14+N     | 2       | `HUFF_ENTRIES`    | número de entradas na tabela de Huffman (uint16 LE)       |
+| 16+N     | 5*E     | `HUFF_TABLE`      | E entradas `{ symbol(uint16 LE), freq(uint32 LE) }`       |
+| 16+N+5E  | 8       | `DATA_BYTES`      | tamanho do bloco de dados comprimido (uint64 LE)          |
+| 24+N+5E  | 1       | `PADDING_BITS`    | bits de padding no último byte (0..7)                     |
+| 25+N+5E  | *       | `COMPRESSED_DATA` | fluxo de tokens LZ77 codificado em Huffman                |
 
 ## Status do projeto
 
@@ -37,31 +37,42 @@ Este é um projeto **experimental / em desenvolvimento**, usado para testar o
 IBM Bob em um exercício de revisão e continuação de código C. Nem todo o
 pipeline está funcional ainda:
 
-- O estágio **LZ77** de `compress()` está implementado, mas contém bugs
-  conhecidos, sinalizados com comentários `REVIEW:` no código, por exemplo:
-  - a variável `count` não é reiniciada antes de contar o tamanho de um novo
-    candidato de correspondência, inflando o tamanho encontrado;
-  - a comparação de "melhor correspondência" (`count > value`) usa a variável
-    errada, já que `value` já foi sobrescrita com o tamanho do candidato
-    anterior;
-  - o token LZ77 é armazenado como um `uint16_t` empacotado
-    (`distance << 8 | value`), mas o restante do pipeline espera um array de
-    bytes plano — é preciso escolher uma representação e manter consistência;
-  - a variável `base` é indevidamente decrementada durante o laço principal,
-    quando deveria permanecer fixa em `256`.
-- O estágio **Huffman** de `compress()` (construção da tabela de frequência,
-  árvore de Huffman, escrita do cabeçalho `.zipc` e codificação em bits) está
-  apenas descrito em comentários `Step N —`, ainda **não implementado**.
-- `build_huffman_tree()` está incompleta: a lista ligada atual reutiliza os
-  ponteiros `left`/`right` tanto para a fase de lista quanto para a árvore
-  final, o que gera conflito (ver comentário `REVIEW:` acima da struct
-  `HuffNode`). É necessário reescrever usando um array de ponteiros (ou
-  min-heap) ordenado por frequência.
-- A função `decompress()` está **inteiramente stubbed**: apenas os passos
-  esperados estão descritos em comentários, sem nenhuma implementação.
-- Há uma limitação conhecida (`FIXME`) no campo `data_bytes`, definido como
-  `uint16_t`, o que limita a saída comprimida a 65535 bytes — deveria ser
-  `uint64_t` para suportar arquivos de tamanho arbitrário.
+- O estágio **LZ77** de `compress()` está implementado e já teve dois bugs
+  corrigidos (a variável `count` agora é reiniciada a cada novo candidato de
+  correspondência, e a comparação de "melhor correspondência" passou a usar
+  `count > best_len` corretamente). Ainda restam bugs conhecidos, sinalizados
+  com comentários `TODO:` no código:
+  - ao emitir um literal (`distance == 0`), o token gravado deveria ser o
+    byte bruto (`window[LOOK_AHEAD]`), mas o código atual grava
+    `(distance << 8) | best_len`, que resulta em `0` para qualquer literal;
+  - a variável `base` continua sendo indevidamente decrementada durante o
+    laço principal, quando deveria permanecer fixa em `256` — isso encolhe
+    a janela de busca a cada iteração até restarem apenas literais.
+- O estágio **Huffman** ganhou funções auxiliares completas
+  (`build_freq_table`, `build_huffman_queue`, `write_bit`/`read_bit` com
+  `BitWriter`/`BitReader`), mas partes centrais ainda não estão prontas:
+  - `build_huffman_tree()` tem três bugs documentados via `TODO`: a lógica de
+    inserção/`memmove` no array de prioridade está incorreta, o campo
+    `leaf->num_symbols` nunca é atribuído ao mesclar dois nós, e o array
+    `leaf->symbols` é alocado mas nunca preenchido com os símbolos dos
+    filhos;
+  - `traverse_tree()` e `generate_codes()` estão **stubbed**, com apenas
+    comentários `TODO 1`–`TODO 8` descrevendo os passos (caso base, checagem
+    de folha, recursão esquerda/direita, alocação do buffer de bits);
+  - `build_huffman_queue()` tem um `TODO` sobre vazamento de memória em caso
+    de falha parcial de alocação (os nós já alocados não são liberados antes
+    de retornar).
+  - As 11 etapas de `compress()` que gravam o cabeçalho `.zipc` e codificam o
+    stream de tokens em bits (chamada das funções acima, escrita do header,
+    `BitWriter`, patch de `DATA_BYTES`/`PADDING_BITS`) ainda estão apenas
+    descritas em comentários `TODO S2-1` a `S2-11`, sem nenhuma implementação.
+- A função `decompress()` está **inteiramente stubbed**: os passos esperados
+  (leitura/validação do header, reconstrução da árvore de Huffman, decodificação
+  bit a bit e replay do LZ77) estão descritos em comentários `TODO D1-*`,
+  `D2-*` e `D3-*`, sem nenhuma implementação.
+- A limitação antiga (`FIXME`) do campo `data_bytes` como `uint16_t` (máximo
+  de 65535 bytes de saída comprimida) foi **corrigida** — o campo agora é
+  `uint64_t`, tanto na struct `ZipcHeader` quanto no layout do arquivo `.zipc`.
 
 ## Como compilar
 

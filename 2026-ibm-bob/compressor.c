@@ -1,11 +1,34 @@
 /*
+ * MIT License
+ *
+ * Copyright (c) 2024 Demerson André Polli
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
  * ===========================================================================
- *  compressor.c — LZ77 + Huffman file compressor
+ *  compressor.c — LZ77 + Huffman file compressor / decompressor
  *
- *  This is an open source code developed to test IBM Bob functionalities.
+ *  Two-stage pipeline:
+ *    COMPRESS:   raw bytes → [LZ77] → token stream → [Huffman] → bit stream
+ *    DECOMPRESS: bit stream → [Huffman decode] → token stream → [LZ77 replay] → raw bytes
  *
- *  License : MIT
- *  Authors : contributors
+ *  Output format: .zipc  (see FILE FORMAT table below)
  * ===========================================================================
  */
 
@@ -14,202 +37,244 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define WINDOW_SIZE 512
-#define LOOK_AHEAD  256
-#define MIN(a,b) ((a) < (b) ? (a) : (b))
+/* ---------------------------------------------------------------------------
+ * Constants
+ * --------------------------------------------------------------------------- */
+#define WINDOW_SIZE 512   /* total sliding-window size in bytes                */
+#define LOOK_AHEAD  256   /* size of each half: buffer half and look-ahead half */
+#define MIN(a,b)    ((a) < (b) ? (a) : (b))
 
-#define TRUE 1
+#define TRUE  1
 #define FALSE 0
-
-typedef uint16_t LZ77Token;
-
-struct LZ77Frequence {
-    LZ77Token token;
-    int       count;
-};
-
-typedef struct LZ77Frequence LZ77Frequence;
-
-struct HuffEntry {
-    uint8_t  symbol;   // the byte value
-    uint32_t freq;     // frequency (LE)
-};
-
-typedef struct HuffEntry HuffEntry;
 
 /*
  * ===========================================================================
  *  FILE FORMAT  (.zipc)
  * ===========================================================================
- * *  Offset  Size  Field
- *  ------    ----  -------------------------------------------------
- *   0        4      MAGIC          — 0x5A 0x49 0x50 0x43  ("ZIPC")
- *   4        1      VERSION        — 0x01
- *   5        8      ORIG_SIZE      — original file size in bytes (uint64_t LE)
- *  13        N+1    ORIG_NAME      — original filename (including null terminator)
- *  14+N      2      HUFF_ENTRIES   — number of entries in the Huffman table (uint16_t LE)
- *  16+N      5*E    HUFF_TABLE     — E entries of { symbol(uint8), freq(uint32 LE) }
- *  16+N+5E   2      DATA_BYTES     — number of bytes in the compressed data block (LE)
- *  18+N+5E   1      PADDING_BITS   — how many bits in the last byte are padding (0..7)
- *  19+N+5E   *      COMPRESSED_DATA — Huffman-encoded LZ77 token stream (packed bits)
+ *  Offset      Size   Field
+ *  ----------  -----  -------------------------------------------------------
+ *   0           4     MAGIC          — 0x5A 0x49 0x50 0x43  ("ZIPC")
+ *   4           1     VERSION        — 0x01
+ *   5           8     ORIG_SIZE      — original file size in bytes (uint64_t LE)
+ *  13           N+1   ORIG_NAME      — original filename (null-terminated)
+ *  14+N         2     HUFF_ENTRIES   — number of entries in the Huffman table (uint16_t LE)
+ *  16+N         5*E   HUFF_TABLE     — E entries of { symbol(uint16 LE), freq(uint32 LE) }
+ *  16+N+5E      8     DATA_BYTES     — number of bytes in the compressed data block (uint64_t LE)
+ *  24+N+5E      1     PADDING_BITS   — how many bits in the last byte are padding (0..7)
+ *  25+N+5E      *     COMPRESSED_DATA — Huffman-encoded LZ77 token stream (packed bits)
+ * ===========================================================================
+ */
+
+/* ---------------------------------------------------------------------------
+ * Forward type declarations (structs reference each other)
+ * --------------------------------------------------------------------------- */
+
+/*
+ * LZ77Token — one packed token produced by the LZ77 stage.
+ *
+ * Encoding (uint16_t):
+ *   high byte — distance (0 = literal token; 1..255 = back-reference distance)
+ *   low  byte — payload  (literal byte value  OR  match length)
+ *
+ * This packing must be used consistently when writing to token_array and when
+ * unpacking in Stage 2 of compress() and in decompress().
+ */
+typedef uint16_t LZ77Token;
+
+/*
+ * HuffEntry — one row of the Huffman frequency table.
+ *   symbol  : the LZ77Token value
+ *   freq    : how many times it appears in the token stream
+ */
+struct HuffEntry {
+    LZ77Token symbol;
+    uint32_t  freq;
+};
+typedef struct HuffEntry HuffEntry;
+
+/*
+ * ZipcHeader — in-memory representation of the .zipc file header.
+ *   Fields map 1-to-1 to the FILE FORMAT table above.
+ *   huff_table and compressed_data are heap-allocated arrays.
  */
 struct ZipcHeader {
-    uint32_t   magic;            // 0x5A495043 ("ZIPC")
-    uint8_t    version;          // 0x01
-    uint64_t   orig_size;        // original file size in bytes (LE)
-    char*      orig_name;        // original file name (null terminator)
-    uint16_t   huff_entries;     // number of entries in the Huffman table (LE)
-    HuffEntry* huff_table;       // pointer to the Huffman table entries (array of HuffEntry)
-    /* FIXME: data_bytes is uint16_t which limits compressed output to 65535 bytes.
-     *        Change to uint64_t to support files of arbitrary size.
-     *        Also update the file-format table above accordingly (field size 2 → 8). */
-    uint16_t   data_bytes;       // number of bytes in the compressed data block (LE)
-    uint8_t    padding_bits;     // how many bits in the last byte are padding (0..7)
-    uint8_t*   compressed_data;  // pointer to the compressed data block (array of bytes)
+    uint32_t   magic;           /* 0x5A495043 ("ZIPC")                         */
+    uint8_t    version;         /* 0x01                                         */
+    uint64_t   orig_size;       /* original file size in bytes (LE)             */
+    char      *orig_name;       /* null-terminated original filename            */
+    uint16_t   huff_entries;    /* number of entries in huff_table              */
+    HuffEntry *huff_table;      /* heap array of huff_entries HuffEntry values  */
+    uint64_t   data_bytes;      /* compressed data block size in bytes          */
+    uint8_t    padding_bits;    /* number of padding bits in the last byte (0..7) */
+    uint8_t   *compressed_data; /* heap array of data_bytes bytes               */
 };
-
 typedef struct ZipcHeader ZipcHeader;
 
 /*
- * ===========================================================================
- *  TWO-STAGE PIPELINE
- * ===========================================================================
+ * HuffNode — one node in the Huffman binary tree.
  *
- *  COMPRESS:   raw bytes  →  [LZ77]  →  token stream  →  [Huffman]  →  bit stream
- *  DECOMPRESS: bit stream →  [Huffman decode]  →  token stream  →  [LZ77 replay]  →  raw bytes
- *
- * ===========================================================================
+ * Leaf nodes:  left == NULL && right == NULL
+ *              symbols[0..num_symbols-1] holds the token value(s)
+ * Internal nodes: left / right point to child subtrees
+ *                 symbols holds the union of all descendant symbols
+ *                 (used only during tree construction; not needed at decode time)
  */
-
-// Huffman-related data structures and helper functions
-
-// HuffNode - one node in the Huffman binary tree
-
-/* REVIEW: HuffNode uses 'left' and 'right' for two different purposes that
- *         conflict with each other:
- *
- *   — In build_huffman_tree() they are used as linked-list prev/next pointers
- *     to chain all nodes together.
- *   — In the final Huffman tree they must be the 0-branch (left) and
- *     1-branch (right) children used during encoding and decoding.
- *
- *   These two roles cannot share the same two pointers.
- *   Solution: add separate 'prev' and 'next' pointers for the list phase,
- *   OR build the list externally (e.g. a pointer array) and keep left/right
- *   exclusively for the tree structure. */
 struct HuffNode {
-    LZ77Token *symbols;     // the byte value (meaningful only in leaf nodes)
-    uint32_t   num_symbols;    // number of symbols in the leaf node
-    unsigned int  freq;     // frequency / combined weight
-    struct HuffNode *left;  // left  child (0-branch), NULL in a leaf
-    struct HuffNode *right; // right child (1-branch), NULL in a leaf
+    LZ77Token       *symbols;      /* symbol value(s) — meaningful in leaves   */
+    uint32_t         num_symbols;  /* number of entries in symbols[]            */
+    unsigned int     freq;         /* frequency / combined weight               */
+    struct HuffNode *left;         /* 0-branch child, NULL in a leaf            */
+    struct HuffNode *right;        /* 1-branch child, NULL in a leaf            */
 };
-
 typedef struct HuffNode HuffNode;
 
-// HuffCode - the variable-length bit-code assigned to one symbol
+/*
+ * HuffCode — the variable-length bit-code assigned to one symbol.
+ *   bits[]  : bit values (each element is 0 or 1), MSB first
+ *   length  : number of valid entries in bits[]
+ */
 struct HuffCode {
-    unsigned char symbol;
-    unsigned char bits[32]; // the actual bits, one per array cell (0 or 1)
-    int           length;   // how many bits are valid
+    LZ77Token     symbol;
+    unsigned char bits[32]; /* one bit per cell; supports trees up to 32 levels deep */
+    unsigned char length;   /* number of valid bits                                  */
 };
-
 typedef struct HuffCode HuffCode;
 
-// BitWriter / BitReader — helpers to write/read individual bits into/from a
-// byte buffer, packing 8 bits per byte.
-struct BitWriter {
-    unsigned char *buf;     // output byte buffer
-    int            byte_pos;
-    int            bit_pos; // current bit position within the current byte (0..7)
-};
+/*
+ * BitWriter — helper to pack individual bits into a heap-allocated byte buffer.
+ *   buf      : heap-allocated output buffer; grown automatically via realloc
+ *   capacity : current allocated size of buf in bytes
+ *   byte_pos : index of the byte currently being filled (0-based)
+ *   bit_pos  : next bit position within the current byte (0 = LSB .. 7 = MSB)
+ *
+ * Initialise before first use:
+ *   writer.buf      = (unsigned char *)calloc(BITWRITER_INIT_CAP, 1);
+ *   writer.capacity = BITWRITER_INIT_CAP;
+ *   writer.byte_pos = 0;
+ *   writer.bit_pos  = 0;
+ */
+#define BITWRITER_INIT_CAP 4096
 
+struct BitWriter {
+    unsigned char *buf;
+    int            capacity;
+    int            byte_pos;
+    int            bit_pos;
+};
 typedef struct BitWriter BitWriter;
 
+/*
+ * BitReader — helper to unpack individual bits from a read-only byte buffer.
+ *   buf      : pointer to the compressed data block (not owned)
+ *   end_pos  : one-past-the-last valid byte index (== data_bytes)
+ *   byte_pos : index of the byte currently being read (0-based)
+ *   bit_pos  : next bit position within the current byte (0 = LSB .. 7 = MSB)
+ *
+ * The caller is responsible for never calling read_bit() more than
+ * (end_pos * 8 - padding_bits) times in total.
+ */
 struct BitReader {
-    const unsigned char *buf; // input byte buffer
-    int            byte_pos;
-    int            bit_pos;   // current bit position within the current byte (0..7)
+    const unsigned char *buf;
+    int                  end_pos;
+    int                  byte_pos;
+    int                  bit_pos;
 };
-
 typedef struct BitReader BitReader;
 
-/*
- * ===========================================================================
- *  QUICK SORT FOR LZ77 FREQUENCY TABLE
+/* ===========================================================================
+ *  SORTING — quicksort for HuffEntry arrays
  * ===========================================================================
  *
- *  The partition() and quicksort() functions are used to sort an array of
- *  LZ77Frequence structures in ascending order based on the count field.
- *
- * ===========================================================================
- */
+ *  partition() and quicksort() sort a HuffEntry array in ascending order by
+ *  the freq field.  Used by build_freq_table() before building the Huffman
+ *  tree so that the lowest-frequency symbols are processed first.
+ * =========================================================================== */
 
-// Partition function for quicksort (used in Huffman tree construction)
-int partition(LZ77Frequence *arr, int low, int high) {
-    LZ77Frequence pivot = arr[high];
-    int i = low - 1;
-    for (int j = low; j < high; j++) {
-        if (arr[j].count < pivot.count) {
+/*
+ * partition — Lomuto partition scheme used by quicksort().
+ *
+ *   arr  : array to partition (in-place)
+ *   low  : inclusive left bound
+ *   high : inclusive right bound; arr[high] is used as the pivot
+ *
+ *   Returns the final index of the pivot after partitioning.
+ */
+int partition(HuffEntry *arr, int32_t low, int32_t high) {
+    HuffEntry pivot = arr[high];
+    int32_t i = low - 1;
+    for (int32_t j = low; j < high; j++) {
+        if (arr[j].freq < pivot.freq) {
             i++;
-            LZ77Frequence temp = arr[i];
+            HuffEntry temp = arr[i];
             arr[i] = arr[j];
             arr[j] = temp;
         }
     }
-    LZ77Frequence temp = arr[i + 1];
+    HuffEntry temp = arr[i + 1];
     arr[i + 1] = arr[high];
     arr[high] = temp;
     return i + 1;
 }
 
-// Quicksort partition function for LZ77Frequence array (ascending order by count)
-void quicksort(LZ77Frequence *arr, int low, int high) {
+/*
+ * quicksort — recursive quicksort over HuffEntry[low..high] by freq (ascending).
+ *
+ *   arr  : array to sort (in-place)
+ *   low  : inclusive left bound  (pass 0 for the full array)
+ *   high : inclusive right bound (pass count-1 for the full array)
+ *
+ * Note: 'low' and 'high' are treated as int32_t to handle the case when low==0 correctly.
+ */
+void quicksort(HuffEntry *arr, int32_t low, int32_t high) {
     if (low < high) {
-        int pi = partition(arr, low, high);
+        int32_t pi = partition(arr, low, high);
         quicksort(arr, low, pi - 1);
         quicksort(arr, pi + 1, high);
     }
 }
 
-/* ---------------------------------------------------------------------------
- * HUFFMAN HELPER FUNCTIONS  (implement these first, then wire into compress/decompress)
- * --------------------------------------------------------------------------- */
+/* ===========================================================================
+ *  HUFFMAN HELPER FUNCTIONS
+ * =========================================================================== */
 
-LZ77Frequence* build_freq_table(LZ77Token *tokens, int *count) {
-    int entries_count = 0;
-    char found = FALSE;
-    int total = *count;
+/*
+ * build_freq_table — count how often each LZ77Token value appears in tokens[].
+ *
+ *   tokens : input array of LZ77Token values  (read-only)
+ *   count  : on entry, the number of tokens in the array;
+ *            on exit,  the number of distinct symbols found
+ *
+ *   Returns a heap-allocated HuffEntry array of (*count) entries sorted by
+ *   frequency (ascending), or NULL on allocation failure.
+ *   The caller is responsible for free()ing the returned array.
+ */
+HuffEntry *build_freq_table(LZ77Token *tokens, uint32_t *count) {
+    uint32_t  entries_count = 0;
+    char      found         = FALSE;
+    uint32_t  total         = *count;
     LZ77Token entry;
 
-    LZ77Frequence *all_tokens = (LZ77Frequence*)malloc(total * sizeof(LZ77Frequence));
+    HuffEntry *all_tokens = (HuffEntry *)malloc(total * sizeof(HuffEntry));
     if (!all_tokens) return NULL;
-    
-    for (int idx = 0; idx < total; idx++) {
-        entry = tokens[idx];
 
-        /* REVIEW: 'found' must be reset to FALSE here, at the start of each
-         *         outer iteration, before the inner search loop runs.
-         *         Currently it is only reset inside the else-branch, meaning
-         *         that if the previous token matched, 'found' stays TRUE and
-         *         the very next token will never enter the !found branch even
-         *         if it is a brand-new symbol. Add:   found = FALSE;   here. */
-        int pos = 0;
+    for (uint32_t idx = 0; idx < total; idx++) {
+        entry = tokens[idx];
+        found = FALSE;
+
+        uint32_t pos = 0;
         for (pos = 0; pos < entries_count; pos++) {
-            if (all_tokens[pos].token == entry) {
+            if (all_tokens[pos].symbol == entry) {
                 found = TRUE;
                 break;
             }
         }
 
         if (!found) {
-            all_tokens[entries_count].token = entry;
-            all_tokens[entries_count].count = 1;
+            all_tokens[entries_count].symbol = entry;
+            all_tokens[entries_count].freq   = 1;
             entries_count++;
-        }
-        else {
-            all_tokens[pos].count++;
-            found = FALSE;
+        } else {
+            all_tokens[pos].freq++;
         }
     }
 
@@ -219,382 +284,616 @@ LZ77Frequence* build_freq_table(LZ77Token *tokens, int *count) {
     return all_tokens;
 }
 
-HuffNode* build_huffman_tree(LZ77Frequence *freq_table, int count) {
-    // Implementation goes here
-    HuffNode *root = NULL, *leaf = NULL, *last = NULL;
+/*
+ * build_huffman_queue — convert a sorted frequency table into an initial
+ *                       priority queue of leaf HuffNodes.
+ *
+ *   freq_table : sorted HuffEntry array (ascending by freq) with *count entries
+ *   count      : on entry, number of entries in freq_table;
+ *                on exit,  number of successfully allocated nodes (may be less
+ *                          than the input count if allocation fails mid-way)
+ *
+ *   Returns a heap-allocated array of (*count) HuffNode pointers, each pointing
+ *   to a newly allocated leaf node, or NULL if the queue allocation fails.
+ *
+ * TODO (partial-failure leak) — When malloc fails for a node or its symbols
+ *   array mid-loop, the function sets *count = idx and returns the partial queue.
+ *   The already-allocated nodes (indices 0..idx-1) are NOT freed before
+ *   returning.  The caller has no way to distinguish a partial result from a
+ *   full one.  Fix: either free all allocated nodes before returning NULL, or
+ *   document clearly that the caller must free the partial array using the
+ *   updated *count value.
+ */
+HuffNode **build_huffman_queue(HuffEntry *freq_table, uint32_t *count) {
+    HuffNode **queue = (HuffNode **)malloc(*count * sizeof(HuffNode *));
+    if (!queue) return NULL;
 
-    /* REVIEW: build_huffman_tree() is incomplete.
-     *
-     *   Step A — Build initial leaf nodes.
-     *            Create one HuffNode per entry in freq_table. Store them in a
-     *            separate pointer array (NOT using left/right, to avoid the
-     *            conflict described on HuffNode above).
-     *            Each leaf: symbols = &freq_table[pos].token, freq = freq_table[pos].count,
-     *            left = NULL, right = NULL.
-     *
-     *   Step B — Merge loop (the actual Huffman algorithm).
-     *            While more than one node remains in the array:
-     *              1. The array is already sorted by freq (freq_table came from quicksort).
-     *                 Take the first two entries (lowest freq) as left and right children.
-     *              2. Allocate a new internal HuffNode:
-     *                   internal->freq  = left->freq + right->freq
-     *                   internal->left  = left
-     *                   internal->right = right
-     *                   internal->symbols = NULL  (not a leaf)
-     *              3. Remove the two consumed nodes from the array.
-     *              4. Insert the new internal node back into the array in sorted
-     *                 position (insert so that freq order is maintained).
-     *            The single node left in the array is the root.
-     *
-     *   Step C — Return root.
-     *
-     *   NOTE: The current linked-list construction below must be replaced entirely
-     *         with the pointer array approach described above. */
-
-    // Make a linked list of HuffNodes from the frequency table
-    for (int pos = 0; pos < count; pos++) {
-        leaf = (HuffNode*)malloc(sizeof(HuffNode));
-        if (!leaf) return NULL;
-
-        leaf->symbols = (LZ77Token*)malloc(sizeof(LZ77Token));
-        if (!leaf->symbols) return NULL;
-
-        *(leaf->symbols) = freq_table[pos].token;
-        leaf->num_symbols = 1;
-        leaf->freq = freq_table[pos].count;
-        leaf->left = NULL;
-        leaf->right = NULL;
-
-        if (root == NULL) {
-            root = leaf;
-            last = leaf;
+    for (uint32_t idx = 0; idx < *count; idx++) {
+        queue[idx] = (HuffNode *)malloc(sizeof(HuffNode));
+        if (!queue[idx]) {
+            *count = idx;
+            return queue;
         }
-        else {
-            last->right = leaf;  /* REVIEW: 'right' used as linked-list next — conflicts
-                                  *         with the tree's 1-branch child. See note above. */
-            leaf->left = last;   /* REVIEW: 'left' used as linked-list prev — conflicts
-                                  *         with the tree's 0-branch child. See note above. */
-            last = leaf;
+        queue[idx]->symbols = (LZ77Token *)malloc(sizeof(LZ77Token));
+        if (!queue[idx]->symbols) {
+            free(queue[idx]);
+            *count = idx;
+            return queue;
+        }
+
+        *(queue[idx]->symbols) = freq_table[idx].symbol;
+        queue[idx]->num_symbols = 1;
+        queue[idx]->freq        = freq_table[idx].freq;
+        queue[idx]->left        = NULL;
+        queue[idx]->right       = NULL;
+    }
+
+    return queue;
+}
+
+/*
+ * build_huffman_tree — merge the priority queue of leaf nodes into a single
+ *                      Huffman binary tree using the greedy algorithm.
+ *
+ *   queue : array of HuffNode pointers sorted by freq (ascending); the array
+ *           is modified in-place during construction
+ *   count : initial number of nodes in the queue
+ *
+ *   Returns the root HuffNode*, or NULL if queue is NULL or empty.
+ *
+ * TODO (bug — memmove direction) — The current memmove shifts queue[1..count-1]
+ *   left by one slot, overwriting queue[0].  But the new 'leaf' node was already
+ *   placed somewhere in queue[1..count-2] before the shift.  After the shift,
+ *   queue[0] ends up pointing to the old queue[1], NOT to the merged leaf.
+ *   The priority-queue maintenance is therefore broken: the merged node may end
+ *   up in the wrong position or be lost entirely.
+ *   Fix: design the insertion and shift as a single consistent operation:
+ *     1. Remove queue[0] and queue[1] (the two nodes just merged).
+ *     2. Find the correct sorted position for 'leaf' in queue[2..count-1].
+ *     3. memmove to open a slot at that position.
+ *     4. Place 'leaf' there.
+ *     5. Decrement count by 1 (two removed, one inserted).
+ *
+ * TODO (bug — leaf->num_symbols never set) — After computing total_symbols and
+ *   allocating leaf->symbols, the assignment  leaf->num_symbols = total_symbols
+ *   is missing.  Every internal node will have num_symbols == 0 (uninitialised),
+ *   which corrupts generate_codes() and any traversal that relies on this field.
+ *   Fix: add  leaf->num_symbols = total_symbols;  after the malloc.
+ *
+ * TODO (bug — leaf->symbols never populated) — The symbols array is malloc'd
+ *   but the symbol values from left->symbols and right->symbols are never copied
+ *   into it.  The array contains uninitialised bytes.
+ *   Fix: after setting leaf->num_symbols, add:
+ *     memcpy(leaf->symbols,
+ *            left->symbols,
+ *            left->num_symbols  * sizeof(LZ77Token));
+ *     memcpy(leaf->symbols + left->num_symbols,
+ *            right->symbols,
+ *            right->num_symbols * sizeof(LZ77Token));
+ */
+HuffNode *build_huffman_tree(HuffNode **queue, uint32_t count) {
+    if (!queue || count == 0) return NULL;
+
+    while (count > 1) {
+        HuffNode *leaf = (HuffNode *)malloc(sizeof(HuffNode));
+        if (!leaf) break;
+
+        HuffNode *left  = queue[0];
+        HuffNode *right = queue[1];
+        uint32_t  total_symbols = left->num_symbols + right->num_symbols;
+
+        leaf->symbols = (LZ77Token *)malloc(total_symbols * sizeof(LZ77Token));
+        if (!leaf->symbols) {
+            free(leaf);
+            break;
+        }
+
+        /* TODO: set leaf->num_symbols = total_symbols; (see doc above)          */
+        /* TODO: memcpy symbols from left and right into leaf->symbols (see doc)  */
+
+        leaf->freq  = left->freq + right->freq;
+        leaf->left  = left;
+        leaf->right = right;
+
+        /* TODO (bug): fix the insertion + memmove logic described above.
+         *   The block below is INCORRECT — replace it entirely.                  */
+        uint8_t inserted = FALSE;
+        for (int idx = 1; idx < (int)count - 1; idx++) {
+            if (leaf->freq < queue[idx + 1]->freq) {
+                queue[idx] = leaf;
+                inserted   = TRUE;
+                break;
+            }
+        }
+        if (!inserted) {
+            queue[count - 1] = leaf;
+        }
+        memmove(&queue[0], &queue[1], (count - 1) * sizeof(HuffNode *));
+        /* END of block to replace */
+
+        count--;
+    }
+
+    return queue[0];
+}
+
+/*
+ * traverse_tree — recursive post-order walk of the Huffman tree that records
+ *                 the bit-code for every leaf symbol into the codes[] array.
+ *
+ *   node      : current node (start the recursion with root)
+ *   codes     : output array of HuffCode; must be pre-allocated with enough
+ *               slots to hold one entry per distinct symbol
+ *   code_idx  : pointer to the next free slot index in codes[]; incremented
+ *               each time a leaf is written
+ *   bits      : scratch buffer (size >= 32) accumulating the bit-path from
+ *               root to the current node; each element is 0 or 1
+ *   depth     : current depth == number of valid bits already in bits[]
+ */
+void traverse_tree(HuffNode *node, HuffCode *codes, uint32_t *code_idx,
+                   unsigned char *bits, unsigned char depth)
+{
+    /* TODO 1 — BASE CASE: if node == NULL, return immediately.                  */
+
+    /* TODO 2 — LEAF CHECK: if (node->left == NULL && node->right == NULL):
+     *   For i = 0 .. node->num_symbols - 1:
+     *     codes[*code_idx].symbol = node->symbols[i];
+     *     memcpy(codes[*code_idx].bits, bits, depth * sizeof(unsigned char));
+     *     codes[*code_idx].length = depth;
+     *     (*code_idx)++;
+     *   return;  (do not recurse further)                                        */
+
+    /* TODO 3 — RECURSE LEFT (0-branch):
+     *   bits[depth] = 0;
+     *   traverse_tree(node->left,  codes, code_idx, bits, depth + 1);           */
+
+    /* TODO 4 — RECURSE RIGHT (1-branch):
+     *   bits[depth] = 1;
+     *   traverse_tree(node->right, codes, code_idx, bits, depth + 1);           */
+}
+
+/*
+ * generate_codes — allocate and populate a HuffCode array by traversing the
+ *                  Huffman tree rooted at 'root'.
+ *
+ *   root  : root of the Huffman tree built by build_huffman_tree()
+ *   count : number of distinct symbols (== number of leaf nodes)
+ *
+ *   Returns a heap-allocated HuffCode array of 'count' entries, or NULL on
+ *   failure.  The caller is responsible for free()ing the returned array.
+ */
+HuffCode *generate_codes(HuffNode *root, uint32_t count) {
+    HuffCode *codes = (HuffCode *)malloc(count * sizeof(HuffCode));
+    if (!codes) return NULL;
+
+    /* TODO 5 — GUARD: if (root == NULL) { free(codes); return NULL; }           */
+
+    /* TODO 6 — SCRATCH BUFFER:
+     *   unsigned char bits[32];
+     *   (32 entries is enough for a tree up to 32 levels deep)                  */
+
+    /* TODO 7 — TRAVERSE:
+     *   uint32_t code_idx = 0;
+     *   traverse_tree(root, codes, &code_idx, bits, 0);
+     *   After the call, code_idx should equal 'count'.  If it does not, the
+     *   tree and the count argument are out of sync — add an assertion or log. */
+
+    /* TODO 8 — return codes;                                                     */
+}
+
+/*
+ * free_huffman_tree — recursively free every HuffNode in post-order, including
+ *                     each node's symbols array.
+ *
+ *   root : root of the tree to free; silently does nothing if NULL
+ */
+void free_huffman_tree(HuffNode *root) {
+    if (root == NULL) return;
+    free_huffman_tree(root->left);
+    free_huffman_tree(root->right);
+    free(root->symbols);
+    free(root);
+}
+
+/*
+ * write_bit — store one bit into the BitWriter's buffer.
+ *
+ *   writer : BitWriter initialised with buf/capacity/byte_pos/bit_pos
+ *   bit    : the bit value to store (0 or 1)
+ *
+ *   The bit is ORed into buf[byte_pos] at position bit_pos (LSB = 0).
+ *   When bit_pos reaches 8 the writer advances to the next byte.  If that
+ *   byte would exceed the current capacity the buffer is doubled with realloc;
+ *   the new bytes are zeroed so that unset bits read back as 0.
+ *
+ *   Returns 0 on success, -1 if realloc fails (the writer is left unchanged
+ *   so the caller can detect and handle the error).
+ */
+int write_bit(BitWriter *writer, uint8_t bit) {
+    if (bit) {
+        writer->buf[writer->byte_pos] |= (unsigned char)(1 << writer->bit_pos);
+    }
+
+    writer->bit_pos++;
+    if (writer->bit_pos == 8) {
+        writer->bit_pos = 0;
+        writer->byte_pos++;
+
+        /* Grow the buffer when the next byte would exceed capacity */
+        if (writer->byte_pos >= writer->capacity) {
+            int new_cap = writer->capacity * 2;
+            unsigned char *grown = (unsigned char *)realloc(writer->buf, new_cap);
+            if (!grown) return -1;
+            /* Zero the newly allocated region so unwritten bits read as 0 */
+            memset(grown + writer->capacity, 0, new_cap - writer->capacity);
+            writer->buf      = grown;
+            writer->capacity = new_cap;
         }
     }
 
-    return root;
+    return 0;
 }
 
+/*
+ * read_bit — read one bit from the BitReader's buffer.
+ *
+ *   reader : BitReader initialised with buf/end_pos/byte_pos/bit_pos
+ *
+ *   Returns the bit value (0 or 1), or -1 if the read would go past end_pos.
+ *   Advances bit_pos; when bit_pos reaches 8, resets it to 0 and increments
+ *   byte_pos.
+ *
+ *   The caller should stop calling read_bit() once the total number of bits
+ *   consumed equals (end_pos * 8 - padding_bits).  The -1 return acts as a
+ *   secondary safety net against accidental over-reads.
+ */
+int read_bit(BitReader *reader) {
+    if (reader->byte_pos >= reader->end_pos) return -1;
 
- /*
- *
- *  build_huffman_tree(freq[256])  → HuffNode* (root)
- *    — Create one leaf HuffNode for every symbol whose freq > 0.
- *    — Use a min-heap (priority queue) ordered by freq.
- *    — Repeat until only one node remains in the heap:
- *        1. Pop the two nodes with the lowest freq (left, right).
- *        2. Create a new internal node whose freq = left->freq + right->freq.
- *        3. Set left/right children and push the new node back into the heap.
- *    — Return the last remaining node as the root.
- *
- *  generate_codes(root, HuffCode codes[256])
- *    — Traverse the tree recursively.
- *    — At each left branch append a 0 to the current code; at each right branch append a 1.
- *    — When a leaf is reached, store the accumulated code in codes[leaf->symbol].
- *
- *  free_huffman_tree(root)
- *    — Post-order recursive free() of every HuffNode.
- *
- *  write_bit(BitWriter*, bit)
- *    — Store one bit into the current byte of the buffer.
- *    — Advance bit_pos; when it reaches 8, advance byte_pos and reset bit_pos to 0.
- *
- *  read_bit(BitReader*)  → 0 or 1
- *    — Read one bit from the current byte.
- *    — Advance bit_pos; when it reaches 8, advance byte_pos and reset bit_pos to 0.
+    int bit = (reader->buf[reader->byte_pos] >> reader->bit_pos) & 1;
+    reader->bit_pos++;
+    if (reader->bit_pos == 8) {
+        reader->bit_pos = 0;
+        reader->byte_pos++;
+    }
+    return bit;
+}
+
+/* ---------------------------------------------------------------------------
+ * Forward declarations
  * --------------------------------------------------------------------------- */
-
-
-/* Forward declarations */
 void compress(const char *input_path, const char *output_path);
 void decompress(const char *input_path, const char *output_path);
 
-/* -----------------------------------------------------------------------
- * usage
- *   Prints how to invoke the program and exits.
- * ----------------------------------------------------------------------- */
+/*
+ * usage — print the command-line synopsis and exit with status 1.
+ *
+ *   program_name : argv[0] passed from main()
+ */
 void usage(const char *program_name)
 {
     printf("Usage:\n");
-    printf("  %s -c <input_file> <output_file>   Compress a file\n", program_name);
+    printf("  %s -c <input_file> <output_file>   Compress a file\n",   program_name);
     printf("  %s -d <input_file> <output_file>   Decompress a file\n", program_name);
 }
 
-/* -----------------------------------------------------------------------
- * compress
- *   TWO-STAGE COMPRESSION: LZ77 sliding window  →  Huffman encoding.
+/*
+ * compress — two-stage compression: LZ77 sliding window → Huffman encoding.
  *
- *   WINDOW LAYOUT (512 bytes total):
+ *   input_path  : path to the raw input file to compress
+ *   output_path : path of the .zipc output file to create
  *
- *     [ 0 ... 255 | 256 ... 511 ]
- *       ^BUFFER^    ^LOOK-AHEAD^
+ *   WINDOW LAYOUT (WINDOW_SIZE = 512 bytes):
  *
- *   Two pointers both start at position 256:
- *     - 'base'  : the start of the look-ahead (left edge, stays at 256)
- *     - 'ahead' : moves right as bytes are read from the file
+ *     index:  [ 0 ........... 255 | 256 ........... 511 ]
+ *                  BUFFER HALF          LOOK-AHEAD HALF
  *
- * ----------------------------------------------------------------------- */
+ *   'base'  is a fixed boundary at index LOOK_AHEAD (256); it never changes.
+ *   'ahead' starts at LOOK_AHEAD and advances right as bytes are read from file.
+ *
+ *   Each LZ77 token is a uint16_t packed as: (distance << 8) | payload
+ *     distance == 0  →  literal:        payload == the raw byte value
+ *     distance >  0  →  back-reference: payload == match length
+ */
 void compress(const char *input_path, const char *output_path)
 {
-    /* ---- STAGE 1 : LZ77  ------------------------------------------------ */
+    /* =========================================================================
+     * STAGE 1 — LZ77 sliding-window tokenisation
+     * ========================================================================= */
 
-    // Declaration of the 512-byte sliding window array.
-    unsigned char window[512];
+    unsigned char window[WINDOW_SIZE];
+    unsigned int  base  = LOOK_AHEAD;   /* fixed boundary; must NOT be modified  */
+    unsigned int  ahead = LOOK_AHEAD;   /* advances as the look-ahead fills up    */
 
-    // Two pointers (base and ahead), both starting at position 256.
-    unsigned int base = 256, ahead = 256;
-
-    // Open input_path for reading in binary mode ("rb").
-    // Check that the file opened successfully.
-    // Read the original file size (fseek to end, ftell, rewind).
-    // Extract the base filename from input_path for the header.
-    
+    /* --- Open input file ----------------------------------------------------- */
     FILE *input_file = fopen(input_path, "rb");
     if (!input_file) {
-        fprintf(stderr, "Failed to open input file: %s\n", input_path);
+        fprintf(stderr, "compress: failed to open input file: %s\n", input_path);
         exit(EXIT_FAILURE);
     }
 
+    /* --- Measure file size --------------------------------------------------- */
+    /* TODO (portability) — ftell() returns long, which is 32 bits on some
+     *   platforms and returns -1 on error.  Replace with fseeko()/ftello()
+     *   (off_t) for correct large-file support, and check for a -1 error.       */
     fseek(input_file, 0, SEEK_END);
     long original_file_size = ftell(input_file);
     rewind(input_file);
 
-    // Declaring a dynamic byte array (e.g. malloc'd unsigned char*)
-    // to accumulate the raw LZ77 token bytes before Huffman encodes them.
-    // Also declaring a counter for how many bytes are stored.
-    
-    LZ77Token *token_array = (LZ77Token*)malloc(sizeof(LZ77Token) * original_file_size);
-    size_t token_count = 0;
-     if (!token_array) {
-        fprintf(stderr, "Failed to allocate memory for token array.\n");
+    /* --- Allocate token array ------------------------------------------------ */
+    /* The worst case (all literals) produces one token per input byte,
+     * so original_file_size slots is sufficient.                                 */
+    LZ77Token *token_array = (LZ77Token *)malloc(sizeof(LZ77Token) * original_file_size);
+    size_t     token_count = 0;
+    if (!token_array) {
+        fprintf(stderr, "compress: failed to allocate token array.\n");
+        fclose(input_file);
         exit(EXIT_FAILURE);
     }
 
-    // INITIAL FILL of the look-ahead half.
-    // Read bytes from the input file one by one into
-    // window[256], window[257], ... advancing 'ahead'
-    // for each byte read, until the look-ahead is full (ahead == 512)
-    // or the file ends.
-
+    /* --- Initial fill of the look-ahead half --------------------------------- */
     size_t bytes_read = fread(window + LOOK_AHEAD, 1, WINDOW_SIZE - ahead, input_file);
     ahead += bytes_read;
 
-    // MAIN LZ77 LOOP.
-    // Continue while there is at least one byte in the look-ahead
-    // (i.e. ahead > LOOK_AHEAD, meaning ahead > 256).
+    /* --- Main LZ77 loop ------------------------------------------------------ */
     while (ahead > LOOK_AHEAD) {
-        unsigned char distance = 0, value = 0;
-        unsigned char count = 0;
-        char match_found = FALSE;
+        unsigned char distance = 0;
+        unsigned char value    = window[LOOK_AHEAD]; /* first byte of look-ahead */
+        unsigned char best_len = 0;
+        char          match_found = FALSE;
 
-        // Read the first byte of the look-ahead: window[LOOK_AHEAD].
-        // Search for it in the buffer, scanning from position 255
-        // down to position 0 (or the earliest valid buffer byte).
-        distance = 0;
-        value = window[LOOK_AHEAD];
-        for (int pos = LOOK_AHEAD - 1; pos >= base; pos--) {
+        /* Search backward through the buffer half for the best match */
+        for (int pos = LOOK_AHEAD - 1; pos >= (int)base; pos--) {
             if (window[pos] == value) {
                 match_found = TRUE;
 
-                /* REVIEW: 'count' must be reset to 0 here, before the inner
-                 *         length-counting loop below. Without this reset, the
-                 *         length from the previous candidate position accumulates
-                 *         into the current one, producing inflated lengths. */
+                /* TODO (bug — count not reset) — Declare and reset a local
+                 *   'count' variable to 0 HERE, before the inner loop below,
+                 *   so that each candidate position starts a fresh length count.
+                 *   Without this reset, length from the previous candidate
+                 *   accumulates, producing inflated match lengths.               */
+                unsigned char count = 0;
 
-                // Count the length of the match starting at this position.
+                /* Count match length at this candidate position */
                 for (int idx = 0;
-                    idx < LOOK_AHEAD - pos && window[pos + idx] == window[LOOK_AHEAD + idx]; idx++) {
+                     idx < LOOK_AHEAD - pos &&
+                     window[pos + idx] == window[LOOK_AHEAD + idx];
+                     idx++) {
                     count++;
                 }
 
-                /* REVIEW: the best-match comparison   count > value   is wrong.
-                 *         At this point 'value' has already been overwritten with
-                 *         the length of the previous best match (see the assignment
-                 *         value = count  a few lines down).  Use a separate variable,
-                 *         e.g. 'best_len', to track the longest match found so far,
-                 *         and compare:   count > best_len   instead. */
-                if (distance == 0 || count > value) {
+                /* Keep the longest match found so far */
+                if (distance == 0 || count > best_len) {
                     distance = LOOK_AHEAD - pos;
-                    value = count;
+                    best_len = count;
                 }
             }
         }
 
-        // NO MATCH FOUND:
-        //     Append two bytes to the token array: { 0x00, window[base] }
-        //     The first byte (0) signals "no match / literal".
+        /* Emit token: literal (distance==0) or back-reference (distance>0) */
+        /* TODO (token encoding) — When distance == 0, the payload must be the
+         *   raw literal byte (window[LOOK_AHEAD]), not best_len (which is 0).
+         *   The current expression  distance << 8 | best_len  correctly stores 0
+         *   in the high byte but also stores 0 in the low byte for a literal.
+         *   Fix: emit  (uint16_t)window[LOOK_AHEAD]  as the literal token, i.e.:
+         *     if (distance == 0)
+         *         token_array[token_count++] = window[LOOK_AHEAD];
+         *     else
+         *         token_array[token_count++] = (distance << 8) | best_len;      */
+        token_array[token_count++] = (distance << 8) | best_len;
 
-        // MATCH FOUND:
-        //     Extend the match: compare window[base+1], window[base+2], ...
-        //     against the bytes that follow the found position in the buffer,
-        //     as long as the bytes are equal and you stay inside the look-ahead.
-        //     Try all candidate positions in the buffer; keep the longest match.
-
-        // Append a back-reference token to the token array: { d, l }
-        //     d = distance from position 256 back to where the match starts
-        //         (i.e. d = 256 - match_position), range 1..255
-        //     l = length of the matched sequence, range 1..255
-        /* REVIEW: the token is stored as a packed uint16_t (distance << 8 | value),
-         *         but the file format and Huffman stage expect the token stream to be
-         *         a flat byte array where each token is two consecutive bytes:
-         *         byte[0] = distance, byte[1] = value (length).
-         *         Either change token_array to unsigned char* and append two bytes,
-         *         or keep uint16_t but document clearly that the high byte is 'd'
-         *         and the low byte is 'l', and unpack accordingly in Stage 2 and
-         *         in decompress(). Be consistent throughout. */
-        token_array[token_count++] = distance << 8 | value;
-
-        // SHIFT THE WINDOW by the number of bytes consumed
-        //     (1 for a literal, l for a back-reference).
-        //     memmove(window, window + shift, 512 - shift)
-        //     Content slides left; old look-ahead becomes new buffer history.
-        unsigned char shift = (distance == 0) ? 1 : value;
+        /* Shift window left by the number of bytes consumed */
+        unsigned char shift = (distance == 0) ? 1 : best_len;
         memmove(window, window + shift, WINDOW_SIZE - shift);
 
-        /* REVIEW: remove the line below. 'base' is a fixed boundary (always 256 /
-         *         LOOK_AHEAD). The sliding is done by memmove on the window content,
-         *         not by moving the pointer. Decrementing base here causes the search
-         *         range to shrink incorrectly on every iteration. */
+        /* TODO (bug — base must NOT change) — Remove the line below.
+         *   'base' is a fixed index (LOOK_AHEAD = 256).  The window content
+         *   moves via memmove above; moving the index as well causes the search
+         *   range to shrink by 'shift' on every iteration, eventually reaching
+         *   zero and making LZ77 emit only literals.
+         *   Delete:  base = base < shift ? 0 : base - shift;                    */
         base = base < shift ? 0 : base - shift;
+
         ahead -= shift;
 
-        // REFILL the look-ahead after the shift.
-        //     Read up to 'shift' new bytes from the input file into
-        //     positions (512 - shift) .. 511.
-        //     Advance 'ahead' only for bytes actually read.
+        /* Refill look-ahead */
         bytes_read = fread(window + (WINDOW_SIZE - shift), 1, shift, input_file);
         ahead += bytes_read;
     }
 
-    // Close the input file.
     fclose(input_file);
 
+    /* =========================================================================
+     * STAGE 2 — Huffman encoding
+     * ========================================================================= */
 
-    /* ---- STAGE 2 : HUFFMAN  --------------------------------------------- */
+    /* TODO S2-1 — BUILD FREQUENCY TABLE:
+     *   uint32_t freq_count = (uint32_t)token_count;
+     *   HuffEntry *freq_table = build_freq_table(token_array, &freq_count);
+     *   if (!freq_table) { free(token_array); exit(EXIT_FAILURE); }             */
 
-    /* Step 8 — BUILD FREQUENCY TABLE.
-     *           Call build_freq_table(tokens, token_count, freq)
-     *           to count how often each byte value appears in the token array. */
+    /* TODO S2-2 — BUILD HUFFMAN QUEUE AND TREE:
+     *   uint32_t queue_count = freq_count;
+     *   HuffNode **queue = build_huffman_queue(freq_table, &queue_count);
+     *   if (!queue) { free(freq_table); free(token_array); exit(EXIT_FAILURE); }
+     *   HuffNode *root = build_huffman_tree(queue, queue_count);
+     *   free(queue);   (the queue array itself; nodes are now owned by the tree) */
 
-    /* Step 9 — BUILD HUFFMAN TREE.
-     *           Call build_huffman_tree(freq) to get the root node.
-     *           Call generate_codes(root, codes) to get the bit-code for every symbol. */
+    /* TODO S2-3 — GENERATE HUFFMAN CODES:
+     *   HuffCode *codes = generate_codes(root, freq_count);
+     *   if (!codes) { free_huffman_tree(root); free(freq_table);
+     *                 free(token_array); exit(EXIT_FAILURE); }                  */
 
-    /* Step 10 — OPEN OUTPUT FILE for writing in binary mode ("wb").
-     *            Check that it opened successfully. */
+    /* TODO S2-4 — OPEN OUTPUT FILE:
+     *   FILE *output_file = fopen(output_path, "wb");
+     *   if (!output_file) { ... clean up and exit ... }                         */
 
-    /* Step 11 — WRITE FILE HEADER (see format table at the top of this file):
-     *              a. Magic bytes: 0x5A 0x49 0x50 0x43
-     *              b. Version:     0x01
-     *              c. ORIG_SIZE:   the original file size as uint64_t little-endian
-     *              d. ORIG_NAME_LEN + ORIG_NAME
-     *              e. HUFF_ENTRIES (uint16_t): number of symbols with freq > 0
-     *              f. HUFF_TABLE:  for each such symbol write { symbol(1 byte), freq(4 bytes LE) }
-     *              g. PADDING_BITS placeholder: write a 0x00 byte now;
-     *                 you will overwrite it after encoding when you know the real value. */
+    /* TODO S2-5 — WRITE FILE HEADER (see FILE FORMAT table at top of file):
+     *   a. Magic bytes:  fwrite("\x5A\x49\x50\x43", 1, 4, output_file);
+     *   b. Version:      fwrite("\x01", 1, 1, output_file);
+     *   c. ORIG_SIZE:    write original_file_size as uint64_t little-endian
+     *   d. ORIG_NAME:    extract base filename from input_path;
+     *                    write the null-terminated string (strlen+1 bytes)
+     *   e. HUFF_ENTRIES: write freq_count as uint16_t little-endian
+     *   f. HUFF_TABLE:   for each entry in freq_table[0..freq_count-1]:
+     *                      write symbol as uint16_t LE, then freq as uint32_t LE
+     *   g. DATA_BYTES placeholder: write 8 zero bytes (uint64_t); will be
+     *                      patched with fseek+fwrite after encoding is complete
+     *   h. PADDING_BITS placeholder: write 0x00; will be patched after encoding */
 
-    /* Step 12 — ENCODE the token array into a bit-stream using the Huffman codes.
-     *            For each byte in tokens[]:
-     *              look up codes[byte], then call write_bit() for each bit in its code.
-     *            Write completed bytes to the output file as they fill up.
-     *            Track the final bit_pos to compute PADDING_BITS = (8 - bit_pos) % 8. */
+    /* TODO S2-6 — INITIALISE BitWriter:
+     *   BitWriter writer;
+     *   writer.buf      = (unsigned char *)calloc(BITWRITER_INIT_CAP, 1);
+     *   writer.capacity = BITWRITER_INIT_CAP;
+     *   writer.byte_pos = 0;
+     *   writer.bit_pos  = 0;
+     *   if (!writer.buf) { ... clean up and exit ... }                          */
 
-    /* Step 13 — FLUSH the last partial byte (if bit_pos > 0, write it padded with 0s). */
+    /* TODO S2-7 — ENCODE token stream:
+     *   For each token in token_array[0..token_count-1]:
+     *     Search codes[] for the matching symbol.
+     *     if (write_bit(&writer, codes[i].bits[j]) < 0) { ... handle OOM ... }
+     *   Compute PADDING_BITS = (8 - writer.bit_pos) % 8.                        */
 
-    /* Step 14 — Go back and overwrite the PADDING_BITS placeholder byte in the header
-     *            with the real padding value (use fseek + fwrite). */
+    /* TODO S2-8 — FLUSH last partial byte:
+     *   If writer.bit_pos > 0, the current byte is partially filled with 0-bits
+     *   as padding; advance byte_pos and write the byte to the output file.     */
 
-    /* Step 15 — Free the token array, free the Huffman tree.
-     *            Close the output file. */
+    /* TODO S2-9 — WRITE compressed data block:
+     *   fwrite(writer.buf, 1, writer.byte_pos, output_file);                   */
+
+    /* TODO S2-10 — PATCH DATA_BYTES and PADDING_BITS placeholders:
+     *   Seek to the DATA_BYTES offset in the output file and write the actual
+     *   data_bytes (uint64_t LE), then write the actual padding_bits (uint8_t). */
+
+    /* TODO S2-11 — FREE and CLOSE:
+     *   free(token_array);
+     *   free(freq_table);
+     *   free(codes);
+     *   free_huffman_tree(root);
+     *   free(writer.buf);
+     *   fclose(output_file);                                                     */
 }
 
-/* -----------------------------------------------------------------------
- * decompress
- *   TWO-STAGE DECOMPRESSION: Huffman decoding  →  LZ77 replay.
+/*
+ * decompress — two-stage decompression: Huffman decoding → LZ77 replay.
  *
- *   The compressed stream is a sequence of 2-byte LZ77 tokens:
- *     { 0,   byte }  -> literal: copy 'byte' directly to output
- *     { d,   l    }  -> back-reference: go back 'd' bytes from position 256
- *                       in the sliding window and copy 'l' bytes to output
+ *   input_path  : path to the .zipc compressed file to read
+ *   output_path : path of the output file to write
  *
- * ----------------------------------------------------------------------- */
+ *   Token interpretation (matches compress()):
+ *     high byte == 0  →  literal:        low byte is the raw byte value
+ *     high byte >  0  →  back-reference: high byte = distance, low byte = length
+ */
 void decompress(const char *input_path, const char *output_path)
 {
-    /* ---- STAGE 1 : READ HEADER & REBUILD HUFFMAN TREE  ----------------- */
+    /* =========================================================================
+     * STAGE 1 — Read header and rebuild Huffman tree
+     * ========================================================================= */
 
-    /* Step 1 — Open input_path for reading in binary mode ("rb").
-     *           Check that it opened successfully. */
+    /* TODO D1-1 — OPEN INPUT FILE:
+     *   FILE *input_file = fopen(input_path, "rb");
+     *   if (!input_file) { fprintf(stderr, ...); exit(EXIT_FAILURE); }          */
 
-    /* Step 2 — READ AND VALIDATE THE HEADER:
-     *              a. Read and verify the 4 magic bytes (abort if wrong).
-     *              b. Read and verify the version byte.
-     *              c. Read ORIG_SIZE (uint64_t LE).
-     *              d. Read ORIG_NAME_LEN, then read ORIG_NAME into a buffer.
-     *              e. Read HUFF_ENTRIES (uint16_t LE).
-     *              f. For each entry read { symbol(1 byte), freq(4 bytes LE) }
-     *                 and rebuild the freq[256] table.
-     *              g. Read PADDING_BITS (1 byte). */
+    /* TODO D1-2 — READ AND VALIDATE HEADER:
+     *   a. Read 4 bytes; compare to magic 0x5A495043; abort if wrong.
+     *   b. Read 1 byte version; abort if != 0x01.
+     *   c. Read uint64_t orig_size (little-endian).
+     *   d. Read the null-terminated ORIG_NAME string into a local buffer.
+     *   e. Read uint16_t huff_entries (little-endian).
+     *   f. For each of huff_entries entries, read:
+     *        symbol (uint16_t LE) and freq (uint32_t LE);
+     *        store into a local HuffEntry array.
+     *   g. Read uint64_t data_bytes (little-endian).
+     *   h. Read uint8_t padding_bits.                                            */
 
-    /* Step 3 — REBUILD THE HUFFMAN TREE from the freq table.
-     *           Call build_huffman_tree(freq) to get the root.
-     *           (No need to call generate_codes — you will walk the tree directly.) */
+    /* TODO D1-3 — REBUILD HUFFMAN TREE:
+     *   uint32_t queue_count = huff_entries;
+     *   HuffNode **queue = build_huffman_queue(freq_table, &queue_count);
+     *   HuffNode *root   = build_huffman_tree(queue, queue_count);
+     *   free(queue);
+     *   (No need to call generate_codes — tree will be walked bit-by-bit.)      */
 
-    /* Step 4 — READ the remaining compressed bytes into a memory buffer.
-     *           You now know the byte count from the file position vs file size. */
+    /* TODO D1-4 — READ COMPRESSED DATA BLOCK:
+     *   Allocate a buffer of data_bytes bytes.
+     *   fread the entire compressed block into it.                               */
 
+    /* =========================================================================
+     * STAGE 2 — Huffman decode: bit stream → LZ77 token stream
+     * ========================================================================= */
 
-    /* ---- STAGE 2 : HUFFMAN DECODE  -------------------------------------- */
+    /* TODO D2-1 — ALLOCATE token output buffer:
+     *   The decoded token count is not known in advance; allocate conservatively,
+     *   e.g. data_bytes * 8 tokens (upper bound), or use a dynamic array.       */
 
-    /* Step 5 — Declare a dynamic byte array to receive the decoded LZ77 tokens. */
+    /* TODO D2-2 — INITIALISE BitReader:
+     *   BitReader reader;
+     *   reader.buf      = compressed_block;
+     *   reader.end_pos  = (int)data_bytes;
+     *   reader.byte_pos = 0;
+     *   reader.bit_pos  = 0;
+     *   uint64_t total_bits = data_bytes * 8 - padding_bits;
+     *   uint64_t bits_read  = 0;                                                 */
 
-    /* Step 6 — DECODE the bit-stream:
-     *           Use a BitReader starting at the first compressed byte.
-     *           Walk the Huffman tree bit by bit (0 → go left, 1 → go right).
-     *           When a leaf is reached, append leaf->symbol to the token array
-     *           and restart from the root.
-     *           Stop when you have decoded enough bytes
-     *           (track count vs expected token bytes, or detect the end of the
-     *           bit-stream using the total bit count minus PADDING_BITS). */
+    /* TODO D2-3 — DECODE loop:
+     *   HuffNode *cur = root;
+     *   while (bits_read < total_bits):
+     *     int bit = read_bit(&reader);
+     *     if (bit < 0) break;   // safety: past end of buffer
+     *     bits_read++;
+     *     cur = (bit == 0) ? cur->left : cur->right;
+     *     if (cur->left == NULL && cur->right == NULL):   // leaf reached
+     *       token_array[token_count++] = cur->symbols[0];
+     *       cur = root;                                   // restart from root   */
 
+    /* =========================================================================
+     * STAGE 3 — LZ77 replay: token stream → raw bytes
+     * ========================================================================= */
 
-    /* ---- STAGE 3 : LZ77 REPLAY  ---------------------------------------- */
+    /* TODO D3-1 — DECLARE sliding window:
+     *   unsigned char window[WINDOW_SIZE];  (same layout as compress)
+     *   memset(window, 0, sizeof(window));  (clear history)                     */
 
-    /* Step 7 — Declare the 512-byte sliding window array (same layout as compress).
-     *           Declare 'wp' = 256 as the write pointer into the window. */
+    /* TODO D3-2 — OPEN OUTPUT FILE:
+     *   FILE *output_file = fopen(output_path, "wb");
+     *   if (!output_file) { ... clean up and exit ... }                         */
 
-    /* Step 8 — Open output_path for writing in binary mode ("wb").
-     *           Check that it opened successfully. */
+    /* TODO D3-3 — MAIN LZ77 REPLAY LOOP:
+     *   for (size_t i = 0; i < token_count; i++):
+     *     uint8_t  dist = (token_array[i] >> 8) & 0xFF;
+     *     uint8_t  pay  =  token_array[i]        & 0xFF;                        */
 
-    /* Step 9 — MAIN LZ77 REPLAY LOOP.
-     *           Read the token array two bytes at a time: (d, l). */
+    /* TODO D3-4 — LITERAL TOKEN  (dist == 0):
+     *   fwrite(&pay, 1, 1, output_file);
+     *   Shift window left by 1:  memmove(window, window+1, WINDOW_SIZE-1);
+     *   window[WINDOW_SIZE - 1] = pay;                                          */
 
-        /* Step 9a — LITERAL TOKEN  (d == 0):
-         *            Write the single byte 'l' to the output file.
-         *            Place 'l' into window[255] (end of buffer)
-         *            and shift the window left by 1 to absorb it into history. */
+    /* TODO D3-5 — BACK-REFERENCE TOKEN  (dist > 0):
+     *   int match_pos = LOOK_AHEAD - dist;   // position in buffer half
+     *   for (int j = 0; j < pay; j++):
+     *     uint8_t byte = window[match_pos + j];
+     *     fwrite(&byte, 1, 1, output_file);
+     *     Shift window left by 1:  memmove(window, window+1, WINDOW_SIZE-1);
+     *     window[WINDOW_SIZE - 1] = byte;                                       */
 
-        /* Step 9b — BACK-REFERENCE TOKEN  (d > 0):
-         *            Compute match_pos = 256 - d.
-         *            Copy 'l' bytes starting at window[match_pos] to the output file.
-         *            Shift the window left by 'l' to absorb those bytes into history. */
-
-    /* Step 10 — Free the token array, free the Huffman tree.
-     *            Close both files. */
+    /* TODO D3-6 — FREE and CLOSE:
+     *   free(compressed_block);
+     *   free(token_array);
+     *   free_huffman_tree(root);
+     *   fclose(input_file);
+     *   fclose(output_file);                                                     */
 }
 
-/* -----------------------------------------------------------------------
- * main
- *   Entry point. Parses -c / -d flags and dispatches accordingly.
- * ----------------------------------------------------------------------- */
+/*
+ * main — entry point; parse -c / -d flags and dispatch to compress/decompress.
+ *
+ *   argc : argument count (must be exactly 4)
+ *   argv : argv[1] = "-c" or "-d"
+ *          argv[2] = input  file path
+ *          argv[3] = output file path
+ */
 int main(int argc, char *argv[])
 {
-    /* We need exactly 4 arguments: program, flag, input, output */
     if (argc != 4) {
         usage(argv[0]);
         return 1;
