@@ -32,7 +32,7 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 
 ## Projetos (2025)
 
-* **Aluguel de carros com Azure:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [dio-azure-car-rental](dio-azure-car-rental/). \[TODO]
+* **Aluguel de carros com Azure:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-car-rental](2025-azure-car-rental/). \[TODO]
 * **API de Pagamentos com Azure API Management:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-api-management](2025-azure-api-management/). \[TODO]
 * **Artigo com uso de chatGPT:** artigo técnico escrito com o uso do chatGPT, disponível na pasta [2025-artigo-chatgpt](2025-artigo-chatgpt/).
 * **Autenticador de boletos:** projeto do curso Microsoft Azure Cloud Native, disponível na pasta [2025-azure-autenticador](2025-azure-autenticador/). \[TODO]
@@ -59,3 +59,4 @@ Este repositório contém todos os projetos elaborados para os *bootcamps* da [D
 * **NFT na rede Etherium:** projeto do curso Binance - Blockchain Developer with Solidity 2025, disponível no URL [OpenSea](https://opensea.io/collection/the-wonderful-solar-system-258185570).
 * **Como criar uma DAO (descentralized autonomous organization):** projeto do curso Binance - Blockchain Developer with Solidity 2025, disponível na pasta [2026-binance-blockchain-dao](2026-binance-blockchain-dao/).
 * NFT de Pokémon: projeto do curso Blockchain Specialist, disponível na pasta [2026-blockchain-specialist-nft](2026-blockchain-specialist-nft/).
+* **IBM Bob:** teste do IBM Bob, disponível na pasta [2026-ibm-bob](2026-ibm-bob/).
